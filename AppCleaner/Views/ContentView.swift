@@ -155,17 +155,24 @@ class AppCleanerViewModel: ObservableObject {
     func performCleanup() async {
         let fm = FileManager.default
         for cat in cleanupCategories where cat.isSelected && cat.size > 0 {
-            for path in cat.paths {
-                if cat.id == "trash" {
-                    // Empty trash via AppleScript
-                    let script = NSAppleScript(source: "tell application \"Finder\" to empty trash")
-                    script?.executeAndReturnError(nil)
-                } else if cat.id == "downloads" {
-                    // Move installers to trash
+            if cat.id == "trash" {
+                // Empty trash by removing each item
+                let trashDir = NSHomeDirectory() + "/.Trash"
+                if let items = try? fm.contentsOfDirectory(atPath: trashDir) {
+                    for item in items {
+                        let itemPath = (trashDir as NSString).appendingPathComponent(item)
+                        try? fm.removeItem(atPath: itemPath)
+                    }
+                }
+            } else if cat.id == "downloads" {
+                // Move installers to trash
+                for path in cat.paths {
                     let url = URL(fileURLWithPath: path)
                     _ = try? await NSWorkspace.shared.recycle([url])
-                } else {
-                    // Delete cache/log contents but keep the directory
+                }
+            } else {
+                // Delete contents but keep the directory
+                for path in cat.paths {
                     if let items = try? fm.contentsOfDirectory(atPath: path) {
                         for item in items {
                             let itemPath = (path as NSString).appendingPathComponent(item)
