@@ -1,0 +1,239 @@
+import SwiftUI
+
+enum ViewMode: String, CaseIterable {
+    case apps = "Applications"
+    case leftovers = "Leftovers"
+    case cleanDrive = "Clean Drive"
+}
+
+@MainActor
+class AppCleanerViewModel: ObservableObject {
+    @Published var apps: [AppInfo] = []
+    @Published var leftovers: [LeftoverGroup] = []
+    @Published var cleanupCategories: [CleanupCategory] = []
+    @Published var selectedApp: AppInfo?
+    @Published var selectedLeftover: LeftoverGroup?
+    @Published var isScanning = false
+    @Published var isLoadingComponents = false
+    @Published var isScanningDrive = false
+    @Published var needsFullDiskAccess = false
+    @Published var searchText = ""
+    @Published var viewMode: ViewMode = .apps
+
+    private let scanner = AppScanner()
+    private let componentFinder = ComponentFinder()
+    private let leftoverScanner = LeftoverScanner()
+    private let driveScanner = DriveCleanerScanner()
+
+    var filteredApps: [AppInfo] {
+        if searchText.isEmpty { return apps }
+        return apps.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    var filteredLeftovers: [LeftoverGroup] {
+        if searchText.isEmpty { return leftovers }
+        return leftovers.filter { $0.bundleIdentifier.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    var selectedComponents: [AppComponent] {
+        switch viewMode {
+        case .apps: return selectedApp?.components ?? []
+        case .leftovers: return selectedLeftover?.components ?? []
+        case .cleanDrive: return []
+        }
+    }
+
+    var selectedSize: Int64 {
+        selectedComponents.filter(\.isSelected).reduce(0) { $0 + $1.size }
+    }
+
+    func scan() async {
+        isScanning = true
+
+        let installedIDs = await scanner.collectBundleIDs()
+
+        async let scannedApps = scanner.scanApplications()
+        async let scannedLeftovers = leftoverScanner.scanLeftovers(installedBundleIDs: installedIDs)
+
+        apps = await scannedApps
+        leftovers = await scannedLeftovers
+
+        isScanning = false
+    }
+
+    func scanDrive() async {
+        isScanningDrive = true
+        needsFullDiskAccess = await driveScanner.needsFullDiskAccess()
+        cleanupCategories = await driveScanner.scan()
+        isScanningDrive = false
+    }
+
+    func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func selectApp(_ app: AppInfo) async {
+        selectedApp = app
+        selectedLeftover = nil
+        isLoadingComponents = true
+
+        if app.components.isEmpty {
+            let components = await componentFinder.findComponents(for: app)
+            let totalSize = components.reduce(0) { $0 + $1.size }
+
+            if let index = apps.firstIndex(where: { $0.id == app.id }) {
+                apps[index].components = components
+                apps[index].totalSize = totalSize
+                selectedApp = apps[index]
+            }
+        }
+
+        isLoadingComponents = false
+    }
+
+    func selectLeftover(_ leftover: LeftoverGroup) {
+        selectedLeftover = leftover
+        selectedApp = nil
+    }
+
+    func toggleComponent(_ component: AppComponent) {
+        switch viewMode {
+        case .apps:
+            guard var app = selectedApp,
+                  let compIndex = app.components.firstIndex(where: { $0.id == component.id }) else { return }
+            app.components[compIndex].isSelected.toggle()
+            selectedApp = app
+            if let appIndex = apps.firstIndex(where: { $0.id == app.id }) { apps[appIndex] = app }
+        case .leftovers:
+            guard var leftover = selectedLeftover,
+                  let compIndex = leftover.components.firstIndex(where: { $0.id == component.id }) else { return }
+            leftover.components[compIndex].isSelected.toggle()
+            selectedLeftover = leftover
+            if let idx = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers[idx] = leftover }
+        case .cleanDrive:
+            break
+        }
+    }
+
+    func toggleSelectAll(_ selectAll: Bool) {
+        switch viewMode {
+        case .apps:
+            guard var app = selectedApp else { return }
+            for i in app.components.indices { app.components[i].isSelected = selectAll }
+            selectedApp = app
+            if let appIndex = apps.firstIndex(where: { $0.id == app.id }) { apps[appIndex] = app }
+        case .leftovers:
+            guard var leftover = selectedLeftover else { return }
+            for i in leftover.components.indices { leftover.components[i].isSelected = selectAll }
+            selectedLeftover = leftover
+            if let idx = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers[idx] = leftover }
+        case .cleanDrive:
+            break
+        }
+    }
+
+    func uninstallSelected() async {
+        let pathsToRemove = selectedComponents.filter(\.isSelected).map(\.path)
+        for path in pathsToRemove {
+            _ = try? await NSWorkspace.shared.recycle([URL(fileURLWithPath: path)])
+        }
+
+        switch viewMode {
+        case .apps:
+            if let app = selectedApp, let index = apps.firstIndex(where: { $0.id == app.id }) { apps.remove(at: index) }
+            selectedApp = nil
+        case .leftovers:
+            if let leftover = selectedLeftover, let index = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers.remove(at: index) }
+            selectedLeftover = nil
+        case .cleanDrive:
+            break
+        }
+    }
+
+    func performCleanup() async {
+        let fm = FileManager.default
+        for cat in cleanupCategories where cat.isSelected && cat.size > 0 {
+            for path in cat.paths {
+                if cat.id == "trash" {
+                    // Empty trash via AppleScript
+                    let script = NSAppleScript(source: "tell application \"Finder\" to empty trash")
+                    script?.executeAndReturnError(nil)
+                } else if cat.id == "downloads" {
+                    // Move installers to trash
+                    let url = URL(fileURLWithPath: path)
+                    _ = try? await NSWorkspace.shared.recycle([url])
+                } else {
+                    // Delete cache/log contents but keep the directory
+                    if let items = try? fm.contentsOfDirectory(atPath: path) {
+                        for item in items {
+                            let itemPath = (path as NSString).appendingPathComponent(item)
+                            try? fm.removeItem(atPath: itemPath)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rescan
+        await scanDrive()
+    }
+
+    func switchMode(_ mode: ViewMode) {
+        viewMode = mode
+        selectedApp = nil
+        selectedLeftover = nil
+        searchText = ""
+
+        if mode == .cleanDrive && cleanupCategories.isEmpty {
+            Task { await scanDrive() }
+        }
+    }
+}
+
+struct ContentView: View {
+    @StateObject private var viewModel = AppCleanerViewModel()
+
+    var body: some View {
+        Group {
+            if viewModel.viewMode == .cleanDrive {
+                CleanDriveView(viewModel: viewModel)
+                    .frame(minWidth: 500, minHeight: 500)
+                    .toolbar {
+                        ToolbarItem(placement: .automatic) {
+                            modePicker
+                        }
+                    }
+            } else {
+                NavigationSplitView {
+                    AppListView(viewModel: viewModel)
+                        .navigationSplitViewColumnWidth(min: 250, ideal: 300)
+                } detail: {
+                    ComponentListView(viewModel: viewModel)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .automatic) {
+                        modePicker
+                    }
+                }
+            }
+        }
+        .task {
+            await viewModel.scan()
+        }
+    }
+
+    private var modePicker: some View {
+        Picker("", selection: Binding(
+            get: { viewModel.viewMode },
+            set: { viewModel.switchMode($0) }
+        )) {
+            ForEach(ViewMode.allCases, id: \.self) { mode in
+                Text(mode.rawValue).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 300)
+    }
+}
