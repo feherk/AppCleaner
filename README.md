@@ -6,6 +6,12 @@ A free, open-source macOS app uninstaller and system cleaner. A lightweight alte
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/feherk/appcleaner)](https://github.com/feherk/appcleaner/releases/latest)
 
+## Screenshots
+
+| Applications | Leftovers | Clean Drive |
+|:---:|:---:|:---:|
+| ![Applications](screenshots/applications.png) | ![Leftovers](screenshots/leftovers.png) | ![Clean Drive](screenshots/clean-drive.png) |
+
 ## Features
 
 ### Uninstall Applications
@@ -51,8 +57,8 @@ A free, open-source macOS app uninstaller and system cleaner. A lightweight alte
 
 ## Installation
 
-1. Download the latest release from [**Releases**](https://github.com/feherk/appcleaner/releases/latest)
-2. Unzip and drag **AppCleaner.app** to your Applications folder
+1. Download the latest DMG from [**Releases**](https://github.com/feherk/appcleaner/releases/latest)
+2. Open the DMG and drag **AppCleaner** to your Applications folder
 3. On first launch, grant Full Disk Access for best results
 
 ## Building from Source
