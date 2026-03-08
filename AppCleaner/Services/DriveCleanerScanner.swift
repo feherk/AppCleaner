@@ -175,31 +175,34 @@ actor DriveCleanerScanner {
         let fm = FileManager.default
         var items: [CleanupFileItem] = []
 
-        for dir in paths {
-            guard let children = try? fm.contentsOfDirectory(atPath: dir) else { continue }
-            for child in children {
-                let fullPath = (dir as NSString).appendingPathComponent(child)
-                var isDir: ObjCBool = false
-                guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { continue }
+        for path in paths {
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: path, isDirectory: &isDir) else { continue }
 
-                let size: Int64
-                if isDir.boolValue {
-                    size = FileSize.directorySize(at: fullPath)
-                } else {
-                    size = FileSize.sizeAt(path: fullPath)
+            if isDir.boolValue {
+                // Directory: list its children
+                guard let children = try? fm.contentsOfDirectory(atPath: path) else { continue }
+                for child in children {
+                    let fullPath = (path as NSString).appendingPathComponent(child)
+                    var childIsDir: ObjCBool = false
+                    guard fm.fileExists(atPath: fullPath, isDirectory: &childIsDir) else { continue }
+
+                    let size = childIsDir.boolValue ? FileSize.directorySize(at: fullPath) : FileSize.sizeAt(path: fullPath)
+                    guard size > 0 else { continue }
+
+                    let attrs = try? fm.attributesOfItem(atPath: fullPath)
+                    let modDate = attrs?[.modificationDate] as? Date
+                    items.append(CleanupFileItem(id: fullPath, name: child, size: size, modDate: modDate, isDirectory: childIsDir.boolValue))
                 }
+            } else {
+                // Individual file (e.g. DMG/PKG installers)
+                let size = FileSize.sizeAt(path: path)
                 guard size > 0 else { continue }
 
-                let attrs = try? fm.attributesOfItem(atPath: fullPath)
+                let name = (path as NSString).lastPathComponent
+                let attrs = try? fm.attributesOfItem(atPath: path)
                 let modDate = attrs?[.modificationDate] as? Date
-
-                items.append(CleanupFileItem(
-                    id: fullPath,
-                    name: child,
-                    size: size,
-                    modDate: modDate,
-                    isDirectory: isDir.boolValue
-                ))
+                items.append(CleanupFileItem(id: path, name: name, size: size, modDate: modDate, isDirectory: false))
             }
         }
 
