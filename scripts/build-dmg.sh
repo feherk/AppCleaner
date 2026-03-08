@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="AppCleaner"
 BUNDLE_ID="com.appcleaner.AppCleaner"
-VERSION="1.1.0"
+VERSION="1.1.1"
 DMG_NAME="AppCleaner-${VERSION}-macOS"
 DMG_PATH="$DIST_DIR/$DMG_NAME.dmg"
 
