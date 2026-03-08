@@ -19,17 +19,12 @@ struct CleanupCategory: Identifiable {
 }
 
 actor DriveCleanerScanner {
-    /// Check if we likely lack Full Disk Access by testing .Trash readability
+    /// Check if we likely lack Full Disk Access by testing TCC database readability
     func needsFullDiskAccess() -> Bool {
-        let home = NSHomeDirectory()
-        let trashDir = "\(home)/.Trash"
-        let fm = FileManager.default
-        // .Trash exists but we can't list its contents → FDA missing
-        guard fm.fileExists(atPath: trashDir) else { return false }
-        guard let items = try? fm.contentsOfDirectory(atPath: trashDir) else { return true }
-        // Has items but directorySize returns 0 → can't read file sizes
-        if !items.isEmpty && FileSize.directorySize(at: trashDir) == 0 { return true }
-        return false
+        // TCC silently returns empty results for .Trash without FDA,
+        // so we test against the TCC database which requires FDA to read
+        let tccDb = "/Library/Application Support/com.apple.TCC/TCC.db"
+        return !FileManager.default.isReadableFile(atPath: tccDb)
     }
 
     func scan() -> [CleanupCategory] {
@@ -83,14 +78,22 @@ actor DriveCleanerScanner {
         let (cacheSize, cachePaths) = scanDirectories(cacheDirs)
         categories.append(CleanupCategory(id: "caches", name: "Cache files", color: "yellow", size: cacheSize, paths: cachePaths, isSelected: cacheSize > 0))
 
-        // 3. Trash
+        // 3. Trash — use Finder AppleScript to get real size (TCC blocks direct access)
         var trashSize: Int64 = 0
         var trashPaths: [String] = []
         let trashDir = "\(home)/.Trash"
+
+        // First try direct access (works with FDA)
         let trashSizeCalc = FileSize.directorySize(at: trashDir)
         if trashSizeCalc > 0 {
             trashSize = trashSizeCalc
             trashPaths = [trashDir]
+        } else {
+            // Fall back to Finder AppleScript (works without FDA)
+            trashSize = Self.trashSizeViaFinder()
+            if trashSize > 0 {
+                trashPaths = [trashDir]
+            }
         }
         categories.append(CleanupCategory(id: "trash", name: "Trash", color: "pink", size: trashSize, paths: trashPaths, isSelected: trashSize > 0))
 
@@ -200,6 +203,82 @@ actor DriveCleanerScanner {
             }
         }
 
+        return items.sorted { $0.size > $1.size }
+    }
+
+    /// Get trash size via Finder AppleScript (bypasses TCC)
+    /// Run osascript and return stdout
+    private static func runOsascript(_ source: String) -> String {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", source]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        try? proc.run()
+        proc.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private static func trashSizeViaFinder() -> Int64 {
+        let output = runOsascript("""
+            tell application "Finder"
+                set totalSize to 0
+                set n to count of items of trash
+                repeat with i from 1 to n
+                    try
+                        set totalSize to totalSize + (size of (item i of trash))
+                    end try
+                end repeat
+                return totalSize
+            end tell
+            """)
+        return Int64(output) ?? 0
+    }
+
+    /// Get trash items via Finder AppleScript (bypasses TCC)
+    func scanTrashItems() -> [CleanupFileItem] {
+        let output = Self.runOsascript("""
+            tell application "Finder"
+                set output to ""
+                set n to count of items of trash
+                repeat with i from 1 to n
+                    try
+                        set anItem to item i of trash
+                        set itemName to name of anItem
+                        set itemSize to size of anItem
+                        set itemDate to modification date of anItem
+                        set output to output & itemName & tab & itemSize & tab & (itemDate as string) & linefeed
+                    end try
+                end repeat
+                return output
+            end tell
+            """)
+
+        var items: [CleanupFileItem] = []
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale.current
+        dateFormatter.dateStyle = .long
+        dateFormatter.timeStyle = .long
+
+        for line in output.components(separatedBy: "\n") where !line.isEmpty {
+            let parts = line.components(separatedBy: "\t")
+            guard parts.count >= 2 else { continue }
+            let name = parts[0]
+            let size = Int64(parts[1]) ?? 0
+            var modDate: Date? = nil
+            if parts.count >= 3 {
+                modDate = dateFormatter.date(from: parts[2])
+            }
+            items.append(CleanupFileItem(
+                id: "trash://\(name)",
+                name: name,
+                size: size,
+                modDate: modDate,
+                isDirectory: false
+            ))
+        }
         return items.sorted { $0.size > $1.size }
     }
 

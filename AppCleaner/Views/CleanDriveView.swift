@@ -64,14 +64,15 @@ struct CleanDriveView: View {
                             isExpanded: Binding(
                                 get: { expandedCategory == cat.id },
                                 set: { isExpanded in
+                                    if isExpanded && cat.size == 0 { return }
                                     expandedCategory = isExpanded ? cat.id : nil
-                                    if isExpanded && cat.items == nil && cat.size > 0 {
+                                    if isExpanded && cat.items == nil {
                                         Task { await viewModel.loadCategoryItems(at: index) }
                                     }
                                 }
                             )
                         ) {
-                            if let items = cat.items {
+                            if let items = cat.items, !items.isEmpty {
                                 ForEach(items.prefix(50)) { item in
                                     HStack(spacing: 8) {
                                         Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
@@ -98,6 +99,12 @@ struct CleanDriveView: View {
                                     }
                                     .padding(.vertical, 1)
                                 }
+                            } else if cat.items != nil {
+                                Text("No files found")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.tertiary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 4)
                             } else {
                                 ProgressView()
                                     .controlSize(.small)
@@ -164,7 +171,14 @@ struct CleanDriveView: View {
                 .disabled(totalSelected == 0)
                 Spacer()
             }
-            .padding()
+            .padding(.top)
+
+            if let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+                Text("v\(version)")
+                    .font(.caption2)
+                    .foregroundStyle(.quaternary)
+                    .padding(.bottom, 8)
+            }
         }
         .alert("Confirm Cleanup", isPresented: $showConfirmation) {
             Button("Cancel", role: .cancel) {}

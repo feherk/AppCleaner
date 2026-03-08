@@ -73,9 +73,15 @@ class AppCleanerViewModel: ObservableObject {
     }
 
     func loadCategoryItems(at index: Int) async {
-        let paths = cleanupCategories[index].paths
-        let items = await driveScanner.scanItems(for: paths)
-        cleanupCategories[index].items = items
+        let cat = cleanupCategories[index]
+        if cat.id == "trash" {
+            // Use Finder AppleScript for Trash (TCC blocks direct access)
+            let items = await driveScanner.scanTrashItems()
+            cleanupCategories[index].items = items
+        } else {
+            let items = await driveScanner.scanItems(for: cat.paths)
+            cleanupCategories[index].items = items
+        }
     }
 
     func openFullDiskAccessSettings() {
@@ -165,14 +171,10 @@ class AppCleanerViewModel: ObservableObject {
         let fm = FileManager.default
         for cat in cleanupCategories where cat.isSelected && cat.size > 0 {
             if cat.id == "trash" {
-                // Empty trash by removing each item
-                let trashDir = NSHomeDirectory() + "/.Trash"
-                if let items = try? fm.contentsOfDirectory(atPath: trashDir) {
-                    for item in items {
-                        let itemPath = (trashDir as NSString).appendingPathComponent(item)
-                        try? fm.removeItem(atPath: itemPath)
-                    }
-                }
+                // Empty trash via Finder AppleScript (works without FDA)
+                let script = NSAppleScript(source: "tell application \"Finder\" to empty trash")
+                var error: NSDictionary?
+                script?.executeAndReturnError(&error)
             } else if cat.id == "downloads" {
                 // Move installers to trash
                 for path in cat.paths {
