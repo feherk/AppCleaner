@@ -5,7 +5,7 @@ struct ComponentListView: View {
     @State private var showConfirmation = false
 
     private var hasSelection: Bool {
-        viewModel.selectedApp != nil || viewModel.selectedLeftover != nil
+        viewModel.selectedApp != nil || !viewModel.selectedLeftovers.isEmpty
     }
 
     private var headerIcon: NSImage? {
@@ -13,7 +13,8 @@ struct ComponentListView: View {
         case .apps:
             return viewModel.selectedApp?.icon
         case .leftovers:
-            return viewModel.selectedLeftover?.icon
+            let groups = viewModel.selectedLeftoverGroups
+            return groups.count == 1 ? groups.first?.icon : (groups.isEmpty ? nil : NSWorkspace.shared.icon(for: .bundle))
         case .cleanDrive:
             return nil
         }
@@ -24,7 +25,9 @@ struct ComponentListView: View {
         case .apps:
             return viewModel.selectedApp?.name ?? ""
         case .leftovers:
-            return viewModel.selectedLeftover?.bundleIdentifier ?? ""
+            let groups = viewModel.selectedLeftoverGroups
+            if groups.count == 1 { return groups.first?.bundleIdentifier ?? "" }
+            return "\(groups.count) leftover groups selected"
         case .cleanDrive:
             return ""
         }
@@ -35,7 +38,10 @@ struct ComponentListView: View {
         case .apps:
             return viewModel.selectedApp?.bundleIdentifier ?? ""
         case .leftovers:
-            return viewModel.selectedLeftover?.note ?? "Leftover files"
+            let groups = viewModel.selectedLeftoverGroups
+            if groups.count == 1 { return groups.first?.note ?? "Leftover files" }
+            let total = groups.reduce(Int64(0)) { $0 + $1.totalSize }
+            return "Total: \(FileSize.formatted(total))"
         case .cleanDrive:
             return ""
         }

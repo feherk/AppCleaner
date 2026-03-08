@@ -12,7 +12,7 @@ class AppCleanerViewModel: ObservableObject {
     @Published var leftovers: [LeftoverGroup] = []
     @Published var cleanupCategories: [CleanupCategory] = []
     @Published var selectedApp: AppInfo?
-    @Published var selectedLeftover: LeftoverGroup?
+    @Published var selectedLeftovers: Set<String> = []
     @Published var isScanning = false
     @Published var isLoadingComponents = false
     @Published var isScanningDrive = false
@@ -35,10 +35,14 @@ class AppCleanerViewModel: ObservableObject {
         return leftovers.filter { $0.bundleIdentifier.localizedCaseInsensitiveContains(searchText) }
     }
 
+    var selectedLeftoverGroups: [LeftoverGroup] {
+        leftovers.filter { selectedLeftovers.contains($0.id) }
+    }
+
     var selectedComponents: [AppComponent] {
         switch viewMode {
         case .apps: return selectedApp?.components ?? []
-        case .leftovers: return selectedLeftover?.components ?? []
+        case .leftovers: return selectedLeftoverGroups.flatMap(\.components)
         case .cleanDrive: return []
         }
     }
@@ -76,7 +80,7 @@ class AppCleanerViewModel: ObservableObject {
 
     func selectApp(_ app: AppInfo) async {
         selectedApp = app
-        selectedLeftover = nil
+        selectedLeftovers.removeAll()
         isLoadingComponents = true
 
         if app.components.isEmpty {
@@ -93,8 +97,7 @@ class AppCleanerViewModel: ObservableObject {
         isLoadingComponents = false
     }
 
-    func selectLeftover(_ leftover: LeftoverGroup) {
-        selectedLeftover = leftover
+    func selectLeftoversChanged() {
         selectedApp = nil
     }
 
@@ -107,11 +110,12 @@ class AppCleanerViewModel: ObservableObject {
             selectedApp = app
             if let appIndex = apps.firstIndex(where: { $0.id == app.id }) { apps[appIndex] = app }
         case .leftovers:
-            guard var leftover = selectedLeftover,
-                  let compIndex = leftover.components.firstIndex(where: { $0.id == component.id }) else { return }
-            leftover.components[compIndex].isSelected.toggle()
-            selectedLeftover = leftover
-            if let idx = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers[idx] = leftover }
+            for idx in leftovers.indices where selectedLeftovers.contains(leftovers[idx].id) {
+                if let compIndex = leftovers[idx].components.firstIndex(where: { $0.id == component.id }) {
+                    leftovers[idx].components[compIndex].isSelected.toggle()
+                    break
+                }
+            }
         case .cleanDrive:
             break
         }
@@ -125,10 +129,9 @@ class AppCleanerViewModel: ObservableObject {
             selectedApp = app
             if let appIndex = apps.firstIndex(where: { $0.id == app.id }) { apps[appIndex] = app }
         case .leftovers:
-            guard var leftover = selectedLeftover else { return }
-            for i in leftover.components.indices { leftover.components[i].isSelected = selectAll }
-            selectedLeftover = leftover
-            if let idx = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers[idx] = leftover }
+            for idx in leftovers.indices where selectedLeftovers.contains(leftovers[idx].id) {
+                for i in leftovers[idx].components.indices { leftovers[idx].components[i].isSelected = selectAll }
+            }
         case .cleanDrive:
             break
         }
@@ -145,8 +148,8 @@ class AppCleanerViewModel: ObservableObject {
             if let app = selectedApp, let index = apps.firstIndex(where: { $0.id == app.id }) { apps.remove(at: index) }
             selectedApp = nil
         case .leftovers:
-            if let leftover = selectedLeftover, let index = leftovers.firstIndex(where: { $0.id == leftover.id }) { leftovers.remove(at: index) }
-            selectedLeftover = nil
+            leftovers.removeAll { selectedLeftovers.contains($0.id) }
+            selectedLeftovers.removeAll()
         case .cleanDrive:
             break
         }
@@ -190,7 +193,7 @@ class AppCleanerViewModel: ObservableObject {
     func switchMode(_ mode: ViewMode) {
         viewMode = mode
         selectedApp = nil
-        selectedLeftover = nil
+        selectedLeftovers.removeAll()
         searchText = ""
 
         if mode == .cleanDrive && cleanupCategories.isEmpty {

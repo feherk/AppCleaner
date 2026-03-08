@@ -103,12 +103,11 @@ struct AppListView: View {
     }
 
     private var leftoversList: some View {
-        List(viewModel.filteredLeftovers, selection: Binding<LeftoverGroup?>(
-            get: { viewModel.selectedLeftover },
-            set: { leftover in
-                if let leftover {
-                    viewModel.selectLeftover(leftover)
-                }
+        List(viewModel.filteredLeftovers, selection: Binding<Set<String>>(
+            get: { viewModel.selectedLeftovers },
+            set: { ids in
+                viewModel.selectedLeftovers = ids
+                viewModel.selectLeftoversChanged()
             }
         )) { leftover in
             HStack(spacing: 10) {
@@ -136,7 +135,7 @@ struct AppListView: View {
                 Spacer()
             }
             .padding(.vertical, 2)
-            .tag(leftover)
+            .tag(leftover.id)
         }
     }
 }
