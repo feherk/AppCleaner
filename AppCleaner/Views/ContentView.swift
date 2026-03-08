@@ -72,6 +72,12 @@ class AppCleanerViewModel: ObservableObject {
         isScanningDrive = false
     }
 
+    func loadCategoryItems(at index: Int) async {
+        let paths = cleanupCategories[index].paths
+        let items = await driveScanner.scanItems(for: paths)
+        cleanupCategories[index].items = items
+    }
+
     func openFullDiskAccessSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
@@ -186,7 +192,17 @@ class AppCleanerViewModel: ObservableObject {
             }
         }
 
-        // Rescan
+        // Animate selected categories to zero
+        withAnimation(.easeInOut(duration: 0.6)) {
+            for i in cleanupCategories.indices where cleanupCategories[i].isSelected {
+                cleanupCategories[i].size = 0
+                cleanupCategories[i].paths = []
+                cleanupCategories[i].isSelected = false
+            }
+        }
+
+        // Wait for animation, then rescan for accurate values
+        try? await Task.sleep(nanoseconds: 800_000_000)
         await scanDrive()
     }
 

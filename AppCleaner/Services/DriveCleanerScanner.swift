@@ -1,5 +1,13 @@
 import Foundation
 
+struct CleanupFileItem: Identifiable {
+    let id: String  // full path
+    let name: String
+    let size: Int64
+    let modDate: Date?
+    let isDirectory: Bool
+}
+
 struct CleanupCategory: Identifiable {
     let id: String
     let name: String
@@ -7,6 +15,7 @@ struct CleanupCategory: Identifiable {
     var size: Int64
     var paths: [String]
     var isSelected: Bool
+    var items: [CleanupFileItem]?  // nil = not yet scanned
 }
 
 actor DriveCleanerScanner {
@@ -124,7 +133,6 @@ actor DriveCleanerScanner {
             "\(home)/Library/Developer/Xcode/DerivedData",
             "\(home)/Library/Developer/Xcode/Archives",
             "\(home)/Library/Developer/Xcode/iOS DeviceSupport",
-            "\(home)/Library/Developer/CoreSimulator/Caches",
         ]
         var xcodePaths: [String] = []
         var xcodeSize: Int64 = 0
@@ -158,6 +166,41 @@ actor DriveCleanerScanner {
         categories.append(CleanupCategory(id: "downloads", name: "Installers (DMG/PKG)", color: "purple", size: dlSize, paths: dlPaths, isSelected: false))
 
         return categories
+    }
+
+    func scanItems(for paths: [String]) -> [CleanupFileItem] {
+        let fm = FileManager.default
+        var items: [CleanupFileItem] = []
+
+        for dir in paths {
+            guard let children = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            for child in children {
+                let fullPath = (dir as NSString).appendingPathComponent(child)
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: fullPath, isDirectory: &isDir) else { continue }
+
+                let size: Int64
+                if isDir.boolValue {
+                    size = FileSize.directorySize(at: fullPath)
+                } else {
+                    size = FileSize.sizeAt(path: fullPath)
+                }
+                guard size > 0 else { continue }
+
+                let attrs = try? fm.attributesOfItem(atPath: fullPath)
+                let modDate = attrs?[.modificationDate] as? Date
+
+                items.append(CleanupFileItem(
+                    id: fullPath,
+                    name: child,
+                    size: size,
+                    modDate: modDate,
+                    isDirectory: isDir.boolValue
+                ))
+            }
+        }
+
+        return items.sorted { $0.size > $1.size }
     }
 
     private func scanDirectories(_ dirs: [String]) -> (Int64, [String]) {
