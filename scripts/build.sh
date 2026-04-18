@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="AppCleaner"
 BUNDLE_ID="com.appcleaner.AppCleaner"
-VERSION="1.1.2"
+VERSION="1.1.3"
 
 # Code signing
 SIGN_IDENTITY="Developer ID Application: Károly Fehér (YG66KQ8KDT)"

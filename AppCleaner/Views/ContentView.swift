@@ -152,7 +152,15 @@ class AppCleanerViewModel: ObservableObject {
     func uninstallSelected() async {
         let pathsToRemove = selectedComponents.filter(\.isSelected).map(\.path)
         for path in pathsToRemove {
-            _ = try? await NSWorkspace.shared.recycle([URL(fileURLWithPath: path)])
+            // Try NSWorkspace first; fall back to Finder AppleScript for protected locations (/Applications)
+            do {
+                try await NSWorkspace.shared.recycle([URL(fileURLWithPath: path)])
+            } catch {
+                let escaped = path.replacingOccurrences(of: "\"", with: "\\\"")
+                let script = NSAppleScript(source: "tell application \"Finder\" to delete (POSIX file \"\(escaped)\" as alias)")
+                var scriptError: NSDictionary?
+                script?.executeAndReturnError(&scriptError)
+            }
         }
 
         switch viewMode {
@@ -179,7 +187,14 @@ class AppCleanerViewModel: ObservableObject {
                 // Move installers to trash
                 for path in cat.paths {
                     let url = URL(fileURLWithPath: path)
-                    _ = try? await NSWorkspace.shared.recycle([url])
+                    do {
+                        try await NSWorkspace.shared.recycle([url])
+                    } catch {
+                        let escaped = path.replacingOccurrences(of: "\"", with: "\\\"")
+                        let script = NSAppleScript(source: "tell application \"Finder\" to delete (POSIX file \"\(escaped)\" as alias)")
+                        var scriptError: NSDictionary?
+                        script?.executeAndReturnError(&scriptError)
+                    }
                 }
             } else {
                 // Delete contents but keep the directory
