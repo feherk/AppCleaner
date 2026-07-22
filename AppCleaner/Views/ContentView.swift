@@ -150,8 +150,13 @@ class AppCleanerViewModel: ObservableObject {
     }
 
     func uninstallSelected() async {
-        let pathsToRemove = selectedComponents.filter(\.isSelected).map(\.path)
-        for path in pathsToRemove {
+        let selected = selectedComponents.filter(\.isSelected)
+
+        // User-level items go to the Trash. Root-owned system items (launchd
+        // jobs, privileged helpers) can't be trashed by the user, so they're
+        // removed together via a single administrator-privileged shell call.
+        for component in selected where !component.requiresAdmin {
+            let path = component.path
             // Try NSWorkspace first; fall back to Finder AppleScript for protected locations (/Applications)
             do {
                 try await NSWorkspace.shared.recycle([URL(fileURLWithPath: path)])
@@ -161,6 +166,11 @@ class AppCleanerViewModel: ObservableObject {
                 var scriptError: NSDictionary?
                 script?.executeAndReturnError(&scriptError)
             }
+        }
+
+        let privileged = selected.filter(\.requiresAdmin)
+        if !privileged.isEmpty {
+            removePrivileged(privileged)
         }
 
         switch viewMode {
@@ -173,6 +183,36 @@ class AppCleanerViewModel: ObservableObject {
         case .cleanDrive:
             break
         }
+    }
+
+    /// Removes root-owned components (launchd jobs, privileged helpers) with a
+    /// single administrator prompt. LaunchDaemons/LaunchAgents are unloaded via
+    /// `launchctl bootout` before their plists are deleted so the running
+    /// process stops immediately rather than lingering until reboot.
+    private func removePrivileged(_ components: [AppComponent]) {
+        var commands: [String] = []
+        for component in components {
+            if let label = component.launchdLabel {
+                let domain = component.type == .launchDaemons ? "system" : "gui/$(id -u)"
+                commands.append("/bin/launchctl bootout \(domain)/\(label) 2>/dev/null || true")
+            }
+            commands.append("/bin/rm -rf \(shellQuote(component.path))")
+        }
+        let shellCommand = commands.joined(separator: "; ")
+
+        // Embed the shell command in an AppleScript string literal.
+        let appleScriptLiteral = shellCommand
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = "do shell script \"\(appleScriptLiteral)\" with administrator privileges"
+        let script = NSAppleScript(source: source)
+        var error: NSDictionary?
+        script?.executeAndReturnError(&error)
+    }
+
+    /// Single-quotes a path for safe use in a POSIX shell command.
+    private func shellQuote(_ path: String) -> String {
+        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     func performCleanup() async {

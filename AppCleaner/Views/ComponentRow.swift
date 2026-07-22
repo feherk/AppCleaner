@@ -52,6 +52,9 @@ struct ComponentRow: View {
         case .webKit: return "globe"
         case .crashReports: return "exclamationmark.triangle.fill"
         case .cookies: return "circle.dotted"
+        case .launchAgents: return "arrow.triangle.2.circlepath"
+        case .launchDaemons: return "bolt.badge.clock.fill"
+        case .privilegedHelpers: return "lock.shield.fill"
         }
     }
 
@@ -61,6 +64,7 @@ struct ComponentRow: View {
         case .caches: return .orange
         case .preferences: return .gray
         case .crashReports: return .red
+        case .launchAgents, .launchDaemons, .privilegedHelpers: return .purple
         default: return .secondary
         }
     }

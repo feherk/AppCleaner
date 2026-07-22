@@ -16,16 +16,32 @@ actor ComponentFinder {
             isSelected: true
         ))
 
+        // Vendor prefix (e.g. "com.binarynights") lets us catch shared helper
+        // components whose bundle ID doesn't contain the app name/bundle ID,
+        // such as privileged helpers and ask-pass tools.
+        let vendorPrefix = Self.vendorPrefix(from: bundleID)
+
+        // Patterns for shared vendor locations: the app's own bundle ID plus the
+        // vendor prefix. Used only where over-matching is acceptable (helpers,
+        // containers, launchd jobs) — not for broad user caches/support folders.
+        var vendorPatterns = [bundleID]
+        if let vendorPrefix { vendorPatterns.append(vendorPrefix) }
+
         // Search locations: (directory, type, patterns)
         let searchSpecs: [(String, ComponentType, [String])] = [
             ("\(home)/Library/Application Support", .applicationSupport, [bundleID, appName]),
             ("\(home)/Library/Caches", .caches, [bundleID, appName]),
             ("\(home)/Library/Logs", .logs, [appName, bundleID]),
             ("\(home)/Library/Saved Application State", .savedState, ["\(bundleID).savedState"]),
-            ("\(home)/Library/Containers", .containers, [bundleID]),
+            ("\(home)/Library/Containers", .containers, vendorPatterns),
             ("\(home)/Library/HTTPStorages", .httpStorages, [bundleID]),
             ("\(home)/Library/WebKit", .webKit, [bundleID]),
             ("\(home)/Library/Application Support/CrashReporter", .crashReports, [bundleID]),
+            // System-wide startup jobs and privileged helpers (root-owned).
+            ("\(home)/Library/LaunchAgents", .launchAgents, vendorPatterns),
+            ("/Library/LaunchAgents", .launchAgents, vendorPatterns),
+            ("/Library/LaunchDaemons", .launchDaemons, vendorPatterns),
+            ("/Library/PrivilegedHelperTools", .privilegedHelpers, vendorPatterns),
         ]
 
         for (directory, type, patterns) in searchSpecs {
@@ -82,6 +98,17 @@ actor ComponentFinder {
         }
 
         return components
+    }
+
+    /// Derives the vendor prefix (first two reverse-DNS components, e.g.
+    /// "com.binarynights") from a bundle ID. Returns nil for Apple bundles or
+    /// IDs too short to have a distinct vendor namespace, to avoid over-matching.
+    static func vendorPrefix(from bundleID: String) -> String? {
+        let parts = bundleID.split(separator: ".")
+        guard parts.count >= 3 else { return nil }
+        let prefix = parts.prefix(2).joined(separator: ".")
+        if prefix.lowercased() == "com.apple" { return nil }
+        return prefix
     }
 
     private func findMatches(in directory: String, patterns: [String]) -> [String] {
