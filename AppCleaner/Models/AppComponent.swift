@@ -36,9 +36,15 @@ struct AppComponent: Identifiable, Hashable {
             (path.hasPrefix("/Library/") || path.hasPrefix("/System/"))
     }
 
-    /// launchd label for a LaunchDaemon/LaunchAgent plist (filename without `.plist`).
+    /// launchd label for a LaunchDaemon/LaunchAgent plist. Read from the
+    /// plist's `Label` key (the authoritative value); the filename convention
+    /// is only a fallback.
     var launchdLabel: String? {
         guard type == .launchDaemons || type == .launchAgents else { return nil }
+        if let dict = NSDictionary(contentsOfFile: path),
+           let label = dict["Label"] as? String, !label.isEmpty {
+            return label
+        }
         let file = (path as NSString).lastPathComponent
         return file.hasSuffix(".plist") ? String(file.dropLast(6)) : file
     }

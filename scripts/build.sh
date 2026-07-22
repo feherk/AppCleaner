@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="AppCleaner"
 BUNDLE_ID="com.appcleaner.AppCleaner"
-VERSION="1.1.3"
+VERSION="1.2.0"
 
 # Code signing
 SIGN_IDENTITY="Developer ID Application: Károly Fehér (YG66KQ8KDT)"
@@ -38,6 +38,7 @@ SOURCES=(
     "$SRC_DIR/Views/ComponentListView.swift"
     "$SRC_DIR/Views/ComponentRow.swift"
     "$SRC_DIR/Utilities/FileSize.swift"
+    "$SRC_DIR/Utilities/ScriptRunner.swift"
 )
 
 # ── 2. Compile ────────────────────────────────────────────────────────
@@ -97,6 +98,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>AppCleaner uses Finder to move files to the Trash and to empty the Trash.</string>
 </dict>
 </plist>
 PLIST
@@ -109,6 +112,8 @@ cat > "$BUILD_DIR/entitlements.plist" << 'ENTITLEMENTS'
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>
 ENTITLEMENTS

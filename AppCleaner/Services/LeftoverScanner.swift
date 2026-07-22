@@ -23,7 +23,7 @@ struct LeftoverGroup: Identifiable, Hashable {
 }
 
 actor LeftoverScanner {
-    private var ownBundleID = "com.appcleaner.AppCleaner"
+    private let ownBundleID = "com.appcleaner.AppCleaner"
 
     func scanLeftovers(installedBundleIDs: Set<String>) -> [LeftoverGroup] {
         let home = NSHomeDirectory()

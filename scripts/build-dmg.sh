@@ -11,7 +11,7 @@ BUILD_DIR="$PROJECT_DIR/build"
 DIST_DIR="$PROJECT_DIR/dist"
 APP_NAME="AppCleaner"
 BUNDLE_ID="com.appcleaner.AppCleaner"
-VERSION="1.1.3"
+VERSION="1.2.0"
 DMG_NAME="AppCleaner-${VERSION}-macOS"
 DMG_PATH="$DIST_DIR/$DMG_NAME.dmg"
 
@@ -41,6 +41,7 @@ SOURCES=(
     "$SRC_DIR/Views/ComponentListView.swift"
     "$SRC_DIR/Views/ComponentRow.swift"
     "$SRC_DIR/Utilities/FileSize.swift"
+    "$SRC_DIR/Utilities/ScriptRunner.swift"
 )
 
 # ── 2. Compile ────────────────────────────────────────────────────────
@@ -101,6 +102,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << PLIST
 	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>AppCleaner uses Finder to move files to the Trash and to empty the Trash.</string>
 </dict>
 </plist>
 PLIST
@@ -113,6 +116,8 @@ cat > "$BUILD_DIR/entitlements.plist" << 'ENTITLEMENTS'
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>
 ENTITLEMENTS
@@ -169,12 +174,11 @@ xcrun notarytool submit "$DMG_PATH" --keychain-profile "$NOTARIZE_PROFILE" --wai
 echo "==> Stapling notarization ticket..."
 xcrun stapler staple "$DMG_PATH"
 
-# ── 7. Clean up ──────────────────────────────────────────────────────
-rm -rf "$BUILD_DIR"
-
-# Also update dist .app
+# ── 7. Update dist .app, then clean up ───────────────────────────────
 rm -rf "$DIST_DIR/$APP_NAME.app"
-cp -R "$APP_BUNDLE" "$DIST_DIR/$APP_NAME.app" 2>/dev/null || true
+cp -R "$APP_BUNDLE" "$DIST_DIR/$APP_NAME.app"
+
+rm -rf "$BUILD_DIR"
 
 echo ""
 echo "==> Done! Signed & notarized DMG created at:"

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 struct CleanupFileItem: Identifiable {
@@ -16,6 +17,14 @@ struct CleanupCategory: Identifiable {
     var paths: [String]
     var isSelected: Bool
     var items: [CleanupFileItem]?  // nil = not yet scanned
+}
+
+/// What was left behind after the user-level cleanup pass.
+struct CleanupOutcome {
+    /// System-owned paths that need a single administrator-privileged removal.
+    var adminPaths: [String] = []
+    /// User-level paths that could not be removed (TCC-protected etc.).
+    var failedUserPaths: [String] = []
 }
 
 actor DriveCleanerScanner {
@@ -37,9 +46,6 @@ actor DriveCleanerScanner {
             "\(home)/Library/Logs",
             "/Library/Logs",
             "/private/var/log",
-            "\(home)/Library/Biome",
-            "\(home)/Library/DuetExpertCenter",
-            "\(home)/Library/Metadata",
         ]
         // Add Containers log dirs
         let containersDir = "\(home)/Library/Containers"
@@ -116,9 +122,10 @@ actor DriveCleanerScanner {
         }
         categories.append(CleanupCategory(id: "browser", name: "Browser data", color: "blue", size: browserSize, paths: browserPaths, isSelected: false))
 
-        // 5. Mail cache
+        // 5. Mail cache — caches only. The mail store itself
+        // (~/Library/Mail/V10) holds the user's actual messages and must
+        // never be offered for cleanup.
         let mailDirs = [
-            "\(home)/Library/Mail/V10",
             "\(home)/Library/Containers/com.apple.mail/Data/Library/Caches",
         ]
         var mailPaths: [String] = []
@@ -171,6 +178,55 @@ actor DriveCleanerScanner {
         return categories
     }
 
+    /// User-level cleanup pass. Runs on this actor so multi-gigabyte deletions
+    /// never block the main thread. System-owned items that can't be removed at
+    /// user level are collected for a single admin-privileged removal.
+    func cleanup(categories: [CleanupCategory]) async -> CleanupOutcome {
+        let fm = FileManager.default
+        let home = NSHomeDirectory()
+        var outcome = CleanupOutcome()
+
+        for cat in categories where cat.isSelected && cat.size > 0 {
+            switch cat.id {
+            case "trash":
+                _ = ScriptRunner.emptyTrash()
+                // Locked files or a denied Finder automation permission leave
+                // items behind — hand those to the admin removal pass.
+                let trashDir = "\(home)/.Trash"
+                let remaining = max(Self.trashSizeViaFinder(), FileSize.directorySize(at: trashDir))
+                if remaining > 0 {
+                    outcome.adminPaths.append(trashDir)
+                }
+            case "downloads":
+                // Move installers to trash
+                for path in cat.paths {
+                    if (try? await NSWorkspace.shared.recycle([URL(fileURLWithPath: path)])) == nil,
+                       !ScriptRunner.finderDelete(path: path) {
+                        outcome.failedUserPaths.append(path)
+                    }
+                }
+            default:
+                // Delete contents but keep the directory
+                for dirPath in cat.paths {
+                    guard let children = try? fm.contentsOfDirectory(atPath: dirPath) else { continue }
+                    for child in children {
+                        let itemPath = (dirPath as NSString).appendingPathComponent(child)
+                        do {
+                            try fm.removeItem(atPath: itemPath)
+                        } catch {
+                            if itemPath.hasPrefix(home) {
+                                outcome.failedUserPaths.append(itemPath)
+                            } else {
+                                outcome.adminPaths.append(itemPath)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return outcome
+    }
+
     func scanItems(for paths: [String]) -> [CleanupFileItem] {
         let fm = FileManager.default
         var items: [CleanupFileItem] = []
@@ -209,23 +265,8 @@ actor DriveCleanerScanner {
         return items.sorted { $0.size > $1.size }
     }
 
-    /// Get trash size via Finder AppleScript (bypasses TCC)
-    /// Run osascript and return stdout
-    private static func runOsascript(_ source: String) -> String {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", source]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = Pipe()
-        try? proc.run()
-        proc.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    }
-
     private static func trashSizeViaFinder() -> Int64 {
-        let output = runOsascript("""
+        let output = ScriptRunner.run("""
             tell application "Finder"
                 set totalSize to 0
                 set n to count of items of trash
@@ -236,13 +277,16 @@ actor DriveCleanerScanner {
                 end repeat
                 return totalSize
             end tell
-            """)
-        return Int64(output) ?? 0
+            """).output
+        // AppleScript coerces sums over 2 GB to scientific-notation reals
+        return Int64(output) ?? Int64(Double(output) ?? 0)
     }
 
-    /// Get trash items via Finder AppleScript (bypasses TCC)
+    /// Get trash items via Finder AppleScript (bypasses TCC). Modification
+    /// dates travel as second-deltas from "now" — locale-independent, unlike
+    /// AppleScript's localized date strings.
     func scanTrashItems() -> [CleanupFileItem] {
-        let output = Self.runOsascript("""
+        let output = ScriptRunner.run("""
             tell application "Finder"
                 set output to ""
                 set n to count of items of trash
@@ -251,31 +295,26 @@ actor DriveCleanerScanner {
                         set anItem to item i of trash
                         set itemName to name of anItem
                         set itemSize to size of anItem
-                        set itemDate to modification date of anItem
-                        set output to output & itemName & tab & itemSize & tab & (itemDate as string) & linefeed
+                        set delta to (modification date of anItem) - (current date)
+                        set output to output & itemName & tab & itemSize & tab & delta & linefeed
                     end try
                 end repeat
                 return output
             end tell
-            """)
+            """).output
 
         var items: [CleanupFileItem] = []
-        let dateFormatter = DateFormatter()
-        dateFormatter.locale = Locale.current
-        dateFormatter.dateStyle = .long
-        dateFormatter.timeStyle = .long
-
-        for line in output.components(separatedBy: "\n") where !line.isEmpty {
+        for (index, line) in output.components(separatedBy: "\n").enumerated() where !line.isEmpty {
             let parts = line.components(separatedBy: "\t")
             guard parts.count >= 2 else { continue }
             let name = parts[0]
-            let size = Int64(parts[1]) ?? 0
+            let size = Int64(parts[1]) ?? Int64(Double(parts[1]) ?? 0)
             var modDate: Date? = nil
-            if parts.count >= 3 {
-                modDate = dateFormatter.date(from: parts[2])
+            if parts.count >= 3, let delta = Double(parts[2]) {
+                modDate = Date().addingTimeInterval(delta)
             }
             items.append(CleanupFileItem(
-                id: "trash://\(name)",
+                id: "trash://\(index)/\(name)",
                 name: name,
                 size: size,
                 modDate: modDate,

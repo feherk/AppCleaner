@@ -8,6 +8,19 @@ struct ComponentListView: View {
         viewModel.selectedApp != nil || !viewModel.selectedLeftovers.isEmpty
     }
 
+    private var adminSelectedCount: Int {
+        viewModel.selectedComponents.filter { $0.isSelected && $0.requiresAdmin }.count
+    }
+
+    private var confirmationMessage: String {
+        let count = viewModel.selectedComponents.filter(\.isSelected).count
+        var text = "Move \(count) items (\(FileSize.formatted(viewModel.selectedSize))) to Trash?"
+        if adminSelectedCount > 0 {
+            text += "\n\n\(adminSelectedCount) system item(s) will be deleted permanently with administrator privileges (not moved to Trash)."
+        }
+        return text
+    }
+
     private var headerIcon: NSImage? {
         switch viewModel.viewMode {
         case .apps:
@@ -136,11 +149,11 @@ struct ComponentListView: View {
             }
             .alert("Confirm", isPresented: $showConfirmation) {
                 Button("Cancel", role: .cancel) {}
-                Button("Move to Trash", role: .destructive) {
+                Button(adminSelectedCount > 0 ? "Remove" : "Move to Trash", role: .destructive) {
                     Task { await viewModel.uninstallSelected() }
                 }
             } message: {
-                Text("Move \(viewModel.selectedComponents.filter(\.isSelected).count) items (\(FileSize.formatted(viewModel.selectedSize))) to Trash?")
+                Text(confirmationMessage)
             }
         } else {
             VStack(spacing: 12) {

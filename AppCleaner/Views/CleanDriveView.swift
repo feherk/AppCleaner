@@ -13,6 +13,15 @@ struct CleanDriveView: View {
         viewModel.cleanupCategories.reduce(0) { $0 + $1.size }
     }
 
+    private var confirmationMessage: String {
+        var parts = ["Remove \(FileSize.formatted(totalSelected)) of files?"]
+        if viewModel.cleanupCategories.contains(where: { $0.isSelected && $0.id == "trash" }) {
+            parts.append("The Trash will be emptied.")
+        }
+        parts.append("Files are deleted permanently. Administrator access may be requested for system-owned files.")
+        return parts.joined(separator: "\n\n")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer().frame(height: 30)
@@ -186,7 +195,12 @@ struct CleanDriveView: View {
                 Task { await viewModel.performCleanup() }
             }
         } message: {
-            Text("Remove \(FileSize.formatted(totalSelected)) of files?\n\nTrash will be emptied. Cache and log files will be deleted permanently.")
+            Text(confirmationMessage)
+        }
+        .onChange(of: viewModel.isScanningDrive) { _, scanning in
+            // Collapse any open category on rescan so a stale item list
+            // doesn't linger with a spinner that never resolves.
+            if scanning { expandedCategory = nil }
         }
     }
 
